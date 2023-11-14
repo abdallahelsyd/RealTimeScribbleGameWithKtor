@@ -1,6 +1,8 @@
 package com.example.data
 
 import com.example.data.Room.Phase.*
+import com.example.data.models.Announcement
+import com.example.gson
 import io.ktor.http.cio.websocket.*
 import kotlinx.coroutines.isActive
 
@@ -35,6 +37,26 @@ class Room(
                 SHOW_WORD -> showWord()
             }
         }
+    }
+    suspend fun addPlayer(clientId: String,userName: String,socket: WebSocketSession):Player{
+        val player=Player(userName,socket,clientId,)
+        players=players+player
+        if (players.size==1)
+            phase=WAITING_FOR_PLAYERS
+        else if (players.size==2 && phase==WAITING_FOR_PLAYERS) {
+            phase = WAITING_FOR_START
+            players=players.shuffled()
+        }else if (phase==WAITING_FOR_START&&players.size==maxPlayer){
+            phase=NEW_ROUND
+            players=players.shuffled()
+        }
+        val announcement=Announcement(
+            "$userName joined the room",
+            System.currentTimeMillis(),
+            Announcement.TYPE_PLAYER_JOINED
+        )
+        broadcast(gson.toJson(announcement))
+        return player
     }
     suspend fun broadcast(msg:String){
         players.forEach {

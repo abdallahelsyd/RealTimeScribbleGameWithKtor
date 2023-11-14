@@ -1,10 +1,15 @@
 package com.example.routes
 
-import com.example.data.models.BaseModel
-import com.example.data.models.ChatMassage
+import com.example.data.Player
+import com.example.data.Room
+import com.example.data.models.*
 import com.example.gson
+import com.example.other.Constants.TYPE_ANNOUNCEMENT
 import com.example.other.Constants.TYPE_CHAT_MASSAGE
+import com.example.other.Constants.TYPE_DRAW_DATA
+import com.example.other.Constants.TYPE_JOIN_ROOM_ERROR
 import com.example.plugins.session.DrawingSession
+import com.example.server
 import com.google.gson.JsonParser
 import io.ktor.http.cio.websocket.*
 import io.ktor.routing.*
@@ -12,6 +17,42 @@ import io.ktor.sessions.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.channels.consumeEach
 
+
+
+
+fun Route.gameWebSocketRoute(){
+    route("/ws/draw"){
+        standerWebSocket { socket, clientId, message, payload ->
+            when(payload){
+                is DrawData->{
+                    val room = server.rooms[payload.roomName]?:return@standerWebSocket
+                    if (room.phase ==Room.Phase.GAME_RUNNING){
+                        room.broadcastToAllExcept(message,clientId)
+                    }
+                }
+                is ChatMassage->{
+
+                }
+                is Announcement->{
+
+                }
+                is JoinRoomHandShake->{
+                    val room= server.rooms[payload.roomName]
+                    if (room==null){
+                        val gameError =GameError(GameError.ERROR_ROOM_NOT_FOUND)
+                        socket.send(Frame.Text(gson.toJson(gameError)))
+                        return@standerWebSocket
+                    }
+                    val player=Player(payload.userName,socket,payload.clientId)
+                    server.playerJoined(player)
+                    if (!room.containsPlayer(player.userName)){
+                        room.addPlayer(player.clientId,player.userName,socket)
+                    }
+                }
+            }
+        }
+    }
+}
 fun Route.standerWebSocket(
     handleFrame: suspend (
         socket:DefaultWebSocketSession,
@@ -33,6 +74,9 @@ fun Route.standerWebSocket(
                     val jsonObject=JsonParser.parseString((message)).asJsonObject
                     val type =when(jsonObject.get("type").asString){
                         TYPE_CHAT_MASSAGE->ChatMassage::class.java
+                        TYPE_DRAW_DATA-> DrawData::class.java
+                        TYPE_ANNOUNCEMENT -> Announcement::class.java
+                        TYPE_JOIN_ROOM_ERROR -> Announcement::class.java
                         else->BaseModel::class.java
                     }
                     val payload= gson.fromJson(message,type)
@@ -45,6 +89,5 @@ fun Route.standerWebSocket(
         }finally {
             //handle disconnects
         }
-
     }
 }
