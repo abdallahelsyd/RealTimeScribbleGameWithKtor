@@ -85,7 +85,18 @@ fun Route.joinRoomRoute(){
                 room==null->{
                     call.respond(HttpStatusCode.OK,BasicApiResponse(false,"Room is not exist"))
                 }
-
+                room.containsPlayer(userName!!)->{
+                    call.respond(
+                        HttpStatusCode.OK,
+                        BasicApiResponse(false,"Player is already exist")
+                        )
+                }
+                room.players.size>= room.maxPlayer ->{
+                    call.respond(HttpStatusCode.OK,"Room is already full")
+                }
+                else->{
+                    call.respond(HttpStatusCode.OK,BasicApiResponse(true))
+                }
             }
         }
 

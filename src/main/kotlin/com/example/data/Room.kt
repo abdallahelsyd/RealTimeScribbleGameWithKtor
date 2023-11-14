@@ -20,4 +20,7 @@ class Room(
                 it.socket.send(Frame.Text(msg))
         }
     }
+    fun containsPlayer(userName:String):Boolean{
+        return players.find { it.userName==userName } !=null
+    }
 }
