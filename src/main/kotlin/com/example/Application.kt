@@ -2,6 +2,7 @@ package com.example
 
 import com.example.plugins.*
 import com.example.plugins.session.DrawingSession
+import com.google.gson.Gson
 import io.ktor.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
@@ -14,7 +15,7 @@ fun main() {
 }
 
 val server=DrawingServer()
-
+val gson = Gson()
 fun Application.module() {
     configureSockets()
     configureSerialization()
