@@ -8,7 +8,9 @@ import com.example.other.Constants.TYPE_ANNOUNCEMENT
 import com.example.other.Constants.TYPE_CHAT_MASSAGE
 import com.example.other.Constants.TYPE_CHOSEN_WORD
 import com.example.other.Constants.TYPE_DRAW_DATA
+import com.example.other.Constants.TYPE_GAME_STATE
 import com.example.other.Constants.TYPE_JOIN_ROOM_ERROR
+import com.example.other.Constants.TYPE_NEW_WORD
 import com.example.other.Constants.TYPE_PHASE_CHANGE
 import com.example.plugins.session.DrawingSession
 import com.example.server
@@ -33,7 +35,10 @@ fun Route.gameWebSocketRoute(){
                     }
                 }
                 is ChatMassage->{
-
+                    val room = server.rooms[payload.roomName]?:return@standerWebSocket
+                    if (!room.checkWordAndNotifyPlayers(payload)){
+                        room.broadcast(message)
+                    }
                 }
                 is Announcement->{
 
@@ -85,6 +90,8 @@ fun Route.standerWebSocket(
                         TYPE_JOIN_ROOM_ERROR -> Announcement::class.java
                         TYPE_PHASE_CHANGE -> PhaseChange::class.java
                         TYPE_CHOSEN_WORD -> ChosenWord::class.java
+                        TYPE_GAME_STATE -> GameState::class.java
+                        TYPE_NEW_WORD -> NewWords::class.java
                         else->BaseModel::class.java
                     }
                     val payload= gson.fromJson(message,type)

@@ -1,11 +1,12 @@
 package com.example.data
 
-import com.example.DrawingServer
 import com.example.data.Room.Phase.*
-import com.example.data.models.Announcement
-import com.example.data.models.ChosenWord
-import com.example.data.models.PhaseChange
+import com.example.data.models.*
 import com.example.gson
+import com.example.other.getRandomWords
+import com.example.other.matchesWord
+import com.example.other.transformToUnderscores
+import com.example.other.words
 import io.ktor.http.cio.websocket.*
 import kotlinx.coroutines.*
 
@@ -17,8 +18,11 @@ class Room(
 
     private var timerJob:Job?=null
     private var drawingPlayer:Player?=null
-    private var winningPlayer= listOf<String>()
+    private var winningPlayers= listOf<String>()
     private var word:String?=null
+    private var curWords:List<String>?=null
+    private var drawingPlayerIndex=0
+    private var startTime =0L
 
     private var phaseChangeListener: ((Phase)->Unit)?=null
     var phase= WAITING_FOR_PLAYERS
@@ -70,6 +74,7 @@ class Room(
     private fun timeAndNotify(ms:Long){
         timerJob?.cancel()
         timerJob=GlobalScope.launch {
+            startTime=System.currentTimeMillis()
             val phaseChange=PhaseChange(phase,ms,drawingPlayer?.userName)
             repeat((ms/ UPDATE_TIME_FREQUENCY).toInt()){
                 if (it!=0){
@@ -124,14 +129,40 @@ class Room(
         }
     }
     private fun newRound(){
-
+        curWords= getRandomWords(3)
+        val newWords =NewWords(curWords!!)
+        nextDrawingPlayer()
+        GlobalScope.launch {
+            drawingPlayer?.socket?.send(Frame.Text(gson.toJson(newWords)))
+            timeAndNotify(DELAY_NEW_ROUND_TO_GAME_RUNNING)
+        }
+    }
+    private fun isGussCorrect(guess:ChatMassage):Boolean{
+        return guess.matchesWord(word?:return false)
+                && !winningPlayers.contains(guess.from)
+                && guess.from!=drawingPlayer?.userName
+                && phase==GAME_RUNNING
     }
     private fun gameRunning(){
-
+        winningPlayers= listOf()
+        val wordToSend=word?:curWords?.random()?: words.random()
+        val wordWithUnderscores=wordToSend.transformToUnderscores()
+        val drawingUserName=(drawingPlayer?:players.random()).userName
+        val gameStateForDrawingPlayer=GameState(drawingUserName,wordToSend)
+        val gameStateForGuessingPlayer=GameState(drawingUserName,wordWithUnderscores)
+        GlobalScope.launch {
+            broadcastToAllExcept(
+                gson.toJson(gameStateForGuessingPlayer),
+                drawingPlayer?.clientId?:players.random().clientId
+            )
+            drawingPlayer?.socket?.send(Frame.Text(gson.toJson(gameStateForDrawingPlayer)))
+            timeAndNotify(DELAY_GAME_RUNNING_TO_SHOW_WORD)
+            println("Drawing phase in room $name started. It'll last ${DELAY_GAME_RUNNING_TO_SHOW_WORD / 1000}s")
+        }
     }
     private fun showWord(){
         GlobalScope.launch {
-            if (winningPlayer.isEmpty()){
+            if (winningPlayers.isEmpty()){
                 drawingPlayer?.let {
                     it.score-= PENALTY_NOBODY_GUESSED_IT
                 }
@@ -144,6 +175,80 @@ class Room(
             val phaseChange=PhaseChange(SHOW_WORD, DELAY_SHOW_WORD_TO_NEW_ROUND)
             broadcast(gson.toJson(phaseChange))
         }
+    }
+
+    private fun addWinningPlayer(userName: String):Boolean{
+        winningPlayers =winningPlayers+userName
+        if (winningPlayers.size==players.size-1){
+            phase=NEW_ROUND
+            return true
+        }
+        return false
+    }
+
+    private suspend fun sendWordToPlayer(player: Player){
+        val delay =when(phase){
+            WAITING_FOR_START -> DELAY_WAITING_FOR_START_TO_NEW_ROUND
+            NEW_ROUND -> DELAY_NEW_ROUND_TO_GAME_RUNNING
+            GAME_RUNNING -> DELAY_GAME_RUNNING_TO_SHOW_WORD
+            SHOW_WORD -> DELAY_SHOW_WORD_TO_NEW_ROUND
+            else -> 0L
+        }
+        val phaseChange=PhaseChange(phase,delay,drawingPlayer?.userName)
+        word?.let {
+            drawingPlayer?.let { player->
+                val gameState=GameState(
+                    player.userName,
+                    if (player.isDrawing || phase==SHOW_WORD) it
+                    else it.transformToUnderscores()
+                )
+            }
+            player.socket.send(Frame.Text(gson.toJson(gameRunning())))
+        }
+        player.socket.send(Frame.Text(gson.toJson(phaseChange)))
+    }
+    suspend fun checkWordAndNotifyPlayers(msg: ChatMassage):Boolean{
+        if (isGussCorrect(msg)){
+            val guessingTime =System.currentTimeMillis()-startTime
+            val timePercentageLeft = 1f -guessingTime.toFloat()/ DELAY_GAME_RUNNING_TO_SHOW_WORD
+            val score = GUESS_SCORE_DEFAULT+ GUESS_SCORE_PERCENTAGE_MULTIPLIER*timePercentageLeft
+            val player =players.find { it.userName==msg.from }
+            player?.let {
+                it.score+=score.toInt()
+            }
+            drawingPlayer?.let {
+                it.score+= GUESS_SCORE_FOR_DRAWING_PLAYER/players.size
+            }
+            val announcement = Announcement(
+                "${msg.from} has guessed it!",
+                System.currentTimeMillis(),
+                Announcement.TYPE_PLAYER_GUESSED_WORD
+            )
+            broadcast(gson.toJson(announcement))
+            val isRoundOver = addWinningPlayer(msg.from)
+            if(isRoundOver) {
+                val roundOverAnnouncement = Announcement(
+                    "Everybody guessed it! New round is starting...",
+                    System.currentTimeMillis(),
+                    Announcement.TYPE_EVERYBODY_GUESSED_IT
+                )
+                broadcast(gson.toJson(roundOverAnnouncement))
+            }
+            return true
+        }
+        return false
+    }
+
+
+    private fun nextDrawingPlayer(){
+        drawingPlayer?.isDrawing=false
+        if (players.isEmpty())
+            return
+        drawingPlayer= if (drawingPlayerIndex<=players.size-1){
+            players[drawingPlayerIndex]
+        }else players.last()
+        if (drawingPlayerIndex<players.size-1)
+            drawingPlayerIndex++ else drawingPlayerIndex=0
     }
     enum class Phase{
         WAITING_FOR_PLAYERS,
@@ -160,5 +265,8 @@ class Room(
         const val DELAY_GAME_RUNNING_TO_SHOW_WORD = 60000L
         const val DELAY_SHOW_WORD_TO_NEW_ROUND = 10000L
         const val PENALTY_NOBODY_GUESSED_IT=50
+        const val GUESS_SCORE_DEFAULT = 50
+        const val GUESS_SCORE_PERCENTAGE_MULTIPLIER = 50
+        const val GUESS_SCORE_FOR_DRAWING_PLAYER = 50
     }
 }
