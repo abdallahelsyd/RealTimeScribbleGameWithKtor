@@ -6,8 +6,10 @@ import com.example.data.models.*
 import com.example.gson
 import com.example.other.Constants.TYPE_ANNOUNCEMENT
 import com.example.other.Constants.TYPE_CHAT_MASSAGE
+import com.example.other.Constants.TYPE_CHOSEN_WORD
 import com.example.other.Constants.TYPE_DRAW_DATA
 import com.example.other.Constants.TYPE_JOIN_ROOM_ERROR
+import com.example.other.Constants.TYPE_PHASE_CHANGE
 import com.example.plugins.session.DrawingSession
 import com.example.server
 import com.google.gson.JsonParser
@@ -49,6 +51,10 @@ fun Route.gameWebSocketRoute(){
                         room.addPlayer(player.clientId,player.userName,socket)
                     }
                 }
+                is ChosenWord->{
+                    val room= server.rooms[payload.roomName]?: return@standerWebSocket
+                    room.setWordAndSwitchToGameRunning(payload.chosenWord)
+                }
             }
         }
     }
@@ -77,6 +83,8 @@ fun Route.standerWebSocket(
                         TYPE_DRAW_DATA-> DrawData::class.java
                         TYPE_ANNOUNCEMENT -> Announcement::class.java
                         TYPE_JOIN_ROOM_ERROR -> Announcement::class.java
+                        TYPE_PHASE_CHANGE -> PhaseChange::class.java
+                        TYPE_CHOSEN_WORD -> ChosenWord::class.java
                         else->BaseModel::class.java
                     }
                     val payload= gson.fromJson(message,type)
