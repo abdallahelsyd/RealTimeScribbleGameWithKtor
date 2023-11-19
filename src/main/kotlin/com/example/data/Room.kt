@@ -28,7 +28,10 @@ class Room(
     private val playerRemoveJobs =ConcurrentHashMap<String,Job>()
     private val leftPlayers = ConcurrentHashMap<String,Pair<Player,Int>>()
 
+    private var currentRoundDrawData:List<String> = listOf()
+
     private var phaseChangeListener: ((Phase)->Unit)?=null
+    var lastDrawData:DrawData?=null
     var phase= WAITING_FOR_PLAYERS
         set(value) {
             synchronized(field){
@@ -55,6 +58,22 @@ class Room(
         }
     }
 
+    private suspend fun sendCurrentRoundInfoToPlayer(player: Player){
+        if (phase==GAME_RUNNING || phase==SHOW_WORD){
+            player.socket.send((Frame.Text(gson.toJson(RoundDrawInfo(currentRoundDrawData)))))
+        }
+    }
+    fun addSerializedDrawInfo(drawAction: String){
+        currentRoundDrawData=currentRoundDrawData+drawAction
+    }
+    private suspend fun finishOffDrawing(){
+        lastDrawData?.let {
+            if (currentRoundDrawData.isNotEmpty() && it.motionEvent ==2){
+                val finishDrawData = it.copy(motionEvent = 1)
+                broadcast(gson.toJson(finishDrawData))
+            }
+        }
+    }
     suspend fun addPlayer(clientId: String,userName: String,socket: WebSocketSession):Player{
         var indexToAdd = players.size-1
         val player=if (leftPlayers.contains(clientId)){
@@ -96,7 +115,10 @@ class Room(
         )
         sendWordToPlayer(player)
         broadcastPlayerStats()
+        sendCurrentRoundInfoToPlayer(player)
         broadcast(gson.toJson(announcement))
+
+
         return player
     }
     fun removePlayer(clientId: String){
@@ -152,9 +174,15 @@ class Room(
             }
             phase= when(phase){
                 WAITING_FOR_START->NEW_ROUND
-                GAME_RUNNING->SHOW_WORD
+                GAME_RUNNING-> {
+                    finishOffDrawing()
+                    SHOW_WORD
+                }
                 SHOW_WORD->NEW_ROUND
-                NEW_ROUND->GAME_RUNNING
+                NEW_ROUND-> {
+                    word=null
+                    GAME_RUNNING
+                }
                 else->WAITING_FOR_PLAYERS
             }
         }
@@ -195,6 +223,7 @@ class Room(
         }
     }
     private fun newRound(){
+        currentRoundDrawData= listOf()
         curWords= getRandomWords(3)
         val newWords =NewWords(curWords!!)
         nextDrawingPlayer()

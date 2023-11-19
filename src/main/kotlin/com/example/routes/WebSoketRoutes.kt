@@ -7,11 +7,14 @@ import com.example.gson
 import com.example.other.Constants.TYPE_ANNOUNCEMENT
 import com.example.other.Constants.TYPE_CHAT_MASSAGE
 import com.example.other.Constants.TYPE_CHOSEN_WORD
+import com.example.other.Constants.TYPE_DISCONNECT_REQUEST
+import com.example.other.Constants.TYPE_DRAW_ACTION
 import com.example.other.Constants.TYPE_DRAW_DATA
 import com.example.other.Constants.TYPE_GAME_STATE
 import com.example.other.Constants.TYPE_JOIN_ROOM_ERROR
 import com.example.other.Constants.TYPE_NEW_WORD
 import com.example.other.Constants.TYPE_PHASE_CHANGE
+import com.example.other.Constants.TYPE_PING
 import com.example.plugins.session.DrawingSession
 import com.example.server
 import com.google.gson.JsonParser
@@ -32,7 +35,15 @@ fun Route.gameWebSocketRoute(){
                     val room = server.rooms[payload.roomName]?:return@standerWebSocket
                     if (room.phase ==Room.Phase.GAME_RUNNING){
                         room.broadcastToAllExcept(message,clientId)
+                        room.addSerializedDrawInfo(message)
                     }
+                    room.lastDrawData=payload
+                }
+                is DrawAction->{
+                    val room = server.getRoomWithClientId(clientId)?:return@standerWebSocket
+                    room.broadcastToAllExcept(message,clientId)
+                    room.addSerializedDrawInfo(message)
+
                 }
                 is ChatMassage->{
                     val room = server.rooms[payload.roomName]?:return@standerWebSocket
@@ -54,11 +65,21 @@ fun Route.gameWebSocketRoute(){
                     server.playerJoined(player)
                     if (!room.containsPlayer(player.userName)){
                         room.addPlayer(player.clientId,player.userName,socket)
+                    }else{
+                        val playerInRoom =room.players.find { it.clientId==clientId }
+                        playerInRoom?.socket=socket
+                        playerInRoom?.startPinging()
                     }
                 }
                 is ChosenWord->{
                     val room= server.rooms[payload.roomName]?: return@standerWebSocket
                     room.setWordAndSwitchToGameRunning(payload.chosenWord)
+                }
+                is Ping->{
+                    server.players[clientId]?.receivedPong()
+                }
+                is DisconnectRequest->{
+                    server.playerLeft(clientId,true)
                 }
             }
         }
@@ -92,6 +113,9 @@ fun Route.standerWebSocket(
                         TYPE_CHOSEN_WORD -> ChosenWord::class.java
                         TYPE_GAME_STATE -> GameState::class.java
                         TYPE_NEW_WORD -> NewWords::class.java
+                        TYPE_PING -> Ping::class.java
+                        TYPE_DISCONNECT_REQUEST -> DisconnectRequest::class.java
+                        TYPE_DRAW_ACTION -> DrawAction::class.java
                         else->BaseModel::class.java
                     }
                     val payload= gson.fromJson(message,type)

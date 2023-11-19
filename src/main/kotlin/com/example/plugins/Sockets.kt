@@ -9,5 +9,7 @@ import io.ktor.websocket.*
 import java.time.*
 
 fun Application.configureSockets() {
-    install(WebSockets)
+    install(WebSockets){
+
+    }
 }
